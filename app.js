@@ -16,7 +16,6 @@ const webviews = require('./routes/webviews');
 
 const userService = require('./services/user-service');
 const colors = require('./colors');
-const weatherService = require('./services/weather-service');
 const jobApplicationService = require('./services/job-application-service');
 let dialogflowService = require('./services/dialogflow-service');
 const fbService = require('./services/fb-service');
@@ -58,9 +57,6 @@ if (!config.EMAIL_FROM) { //sending email
 }
 if (!config.EMAIL_TO) { //sending email
     throw new Error('missing EMAIL_TO');
-}
-if (!config.WEATHER_API_KEY) { //weather api key
-    throw new Error('missing WEATHER_API_KEY');
 }
 if (!config.PG_CONFIG) { //pg config
     throw new Error('missing PG_CONFIG');
@@ -178,7 +174,7 @@ app.get('/webhook/', function (req, res) {
 /*
  * All callbacks for Messenger are POST-ed. They will be sent to the same
  * webhook. Be sure to subscribe your app to your page to receive callbacks
- * for your page. 
+ * for your page.
  * https://developers.facebook.com/docs/messenger-platform/product-overview/setup#subscribe_app
  *
  */
@@ -288,315 +284,6 @@ function receivedMessage(event) {
         fbService.handleMessageAttachments(messageAttachments, senderID);
 	}
 }
-
-
-function handleQuickReply(senderID, quickReply, messageId) {
-    var quickReplyPayload = quickReply.payload;
-    switch (quickReplyPayload) {
-        case "LIVE_AGENT":
-            fbService.sendPassThread(senderID);
-            break;
-        case 'NEWS_PER_WEEK':
-            userService.newsletterSettings(function (updated) {
-                if (updated) {
-                    fbService.sendTextMessage(senderID, "Thank you for subscribing!" +
-                        "If you want to usubscribe just write 'unsubscribe from newsletter'");
-                } else {
-                    fbService.sendTextMessage(senderID, "Newsletter is not available at this moment." +
-                        "Try again later!");
-                }
-            }, 1, senderID);
-            break;
-        case 'NEWS_PER_DAY':
-            userService.newsletterSettings(function (updated) {
-                if (updated) {
-                    fbService.sendTextMessage(senderID, "Thank you for subscribing!" +
-                        "If you want to usubscribe just write 'unsubscribe from newsletter'");
-                } else {
-                    fbService.sendTextMessage(senderID, "Newsletter is not available at this moment." +
-                        "Try again later!");
-                }
-            }, 2, senderID);
-            break;
-        default:
-            dialogflowService.sendTextQueryToDialogFlow(sessionIds, handleDialogFlowResponse, senderID, quickReplyPayload);
-            break;
-    }
-}
-
-
-function handleDialogFlowAction(sender, action, messages, contexts, parameters) {
-	switch (action) {
-        case "input.unknown":
-            fbService.handleMessages(messages, sender);
-            
-            fbService.sendTypingOn(sender);
-
-            //ask what user wants to do next
-            setTimeout(function() {
-                let responseText = "Can you please refrain your question or click the button to talk to a live agent. " +
-                    "I'm just a bot.";
-
-                let replies = [
-                    {
-                        "content_type": "text",
-                        "title": "Live agent",
-                        "payload": "LIVE_AGENT"
-                    }
-                ];
-
-                fbService.sendQuickReply(sender, responseText, replies);
-            }, 2000);
-
-            break;
-        case "talk.human":
-            fbService.sendPassThread(sender);
-            break;
-        case "unsubscribe":
-            userService.newsletterSettings(function(updated) {
-                if (updated) {
-                    fbService.sendTextMessage(sender, "You're unsubscribed. You can always subscribe back!");
-                } else {
-                    fbService.sendTextMessage(sender, "Newsletter is not available at this moment." +
-                        "Try again later!");
-                }
-            }, 0, sender);
-            break;
-        case "buy.iphone":
-            colors.readUserColor(function(color) {
-                    let reply;
-                    if (color === '') {
-                        reply = 'In what color would you like to have it?';
-                    } else {
-                        reply = `Would you like to order it in your favourite color ${color}?`;
-                    }
-                fbService.sendTextMessage(sender, reply);
-
-                }, sender
-            )
-            break;
-        case "iphone_colors.fovourite":
-            colors.updateUserColor(parameters.fields['color'].stringValue, sender);
-            let reply = `Oh, I like it, too. I'll remember that.`;
-            fbService.sendTextMessage(sender, reply);
-            break;
-        case "iphone_colors":
-            colors.readAllColors(function (allColors) {
-                let allColorsString = allColors.join(', ');
-                let reply = `IPhone xxx is available in ${allColorsString}. What is your favourite color?`;
-                fbService.sendTextMessage(sender, reply);
-            });
-            break;
-        case "get-current-weather":
-            if ( parameters.fields['geo-city'].stringValue!='') {
-
-                weatherService(function(weatherResponse){
-                    if (!weatherResponse) {
-                        fbService.sendTextMessage(sender,
-                            `No weather forecast available for ${parameters.fields['geo-city'].stringValue}`);
-                    } else {
-                        let reply = `${messages[0].text.text} ${weatherResponse}`;
-                        fbService.sendTextMessage(sender, reply);
-                    }
-
-
-                }, parameters.fields['geo-city'].stringValue);
-            } else {
-                fbService.sendTextMessage(sender, 'No weather forecast available');
-            }
-        	break;
-        case "faq-delivery":
-            fbService.handleMessages(messages, sender);
-
-            fbService.sendTypingOn(sender);
-
-            //ask what user wants to do next
-            setTimeout(function() {
-                let buttons = [
-                    {
-                        type:"web_url",
-                        url:"https://www.myapple.com/track_order",
-                        title:"Track my order"
-                    },
-                    {
-                        type:"phone_number",
-                        title:"Call us",
-                        payload:"+16505551234",
-                    },
-                    {
-                        type:"postback",
-                        title:"Keep on Chatting",
-                        payload:"CHAT"
-                    }
-                ];
-
-                fbService.sendButtonMessage(sender, "What would you like to do next?", buttons);
-            }, 3000)
-
-            break;
-        case "detailed-application":
-            if (fbService.isDefined(contexts[0]) &&
-                (contexts[0].name.includes('job_application') || contexts[0].name.includes('job-application-details_dialog_context'))
-                && contexts[0].parameters) {
-                let phone_number = (fbService.isDefined(contexts[0].parameters.fields['phone-number'])
-                    && contexts[0].parameters.fields['phone-number'] != '') ? contexts[0].parameters.fields['phone-number'].stringValue : '';
-                let user_name = (fbService.isDefined(contexts[0].parameters.fields['user-name'])
-                    && contexts[0].parameters.fields['user-name'] != '') ? contexts[0].parameters.fields['user-name'].stringValue : '';
-                let previous_job = (fbService.isDefined(contexts[0].parameters.fields['previous-job'])
-                    && contexts[0].parameters.fields['previous-job'] != '') ? contexts[0].parameters.fields['previous-job'].stringValue : '';
-                let years_of_experience = (fbService.isDefined(contexts[0].parameters.fields['years-of-experience'])
-                    && contexts[0].parameters.fields['years-of-experience'] != '') ? contexts[0].parameters.fields['years-of-experience'].stringValue : '';
-                let job_vacancy = (fbService.isDefined(contexts[0].parameters.fields['job-vacancy'])
-                    && contexts[0].parameters.fields['job-vacancy'] != '') ? contexts[0].parameters.fields['job-vacancy'].stringValue : '';
-
-
-                if (phone_number == '' && user_name != '' && previous_job != '' && years_of_experience == '') {
-
-                    let replies = [
-                        {
-                            "content_type":"text",
-                            "title":"Less than 1 year",
-                            "payload":"Less than 1 year"
-                        },
-                        {
-                            "content_type":"text",
-                            "title":"Less than 10 years",
-                            "payload":"Less than 10 years"
-                        },
-                        {
-                            "content_type":"text",
-                            "title":"More than 10 years",
-                            "payload":"More than 10 years"
-                        }
-                    ];
-                    fbService.sendQuickReply(sender, messages[0].text.text[0], replies);
-                } else if (phone_number != '' && user_name != '' && previous_job != '' && years_of_experience != ''
-                    && job_vacancy != '') {
-
-                    jobApplicationService(phone_number, user_name, previous_job, years_of_experience, job_vacancy);
-
-                    fbService.handleMessages(messages, sender);
-
-                } else {
-                    fbService.handleMessages(messages, sender);
-                }
-            }
-            break;
-		default:
-			//unhandled action, just send back the text
-            fbService.handleMessages(messages, sender);
-	}
-}
-
-
-function handleMessages(messages, sender) {
-    let timeoutInterval = 1100;
-    let previousType ;
-    let cardTypes = [];
-    let timeout = 0;
-    for (var i = 0; i < messages.length; i++) {
-
-        if ( previousType == "card" && (messages[i].message != "card" || i == messages.length - 1)) {
-            timeout = (i - 1) * timeoutInterval;
-            setTimeout(handleCardMessages.bind(null, cardTypes, sender), timeout);
-            cardTypes = [];
-            timeout = i * timeoutInterval;
-            setTimeout(handleMessage.bind(null, messages[i], sender), timeout);
-        } else if ( messages[i].message == "card" && i == messages.length - 1) {
-            cardTypes.push(messages[i]);
-            timeout = (i - 1) * timeoutInterval;
-            setTimeout(handleCardMessages.bind(null, cardTypes, sender), timeout);
-            cardTypes = [];
-        } else if ( messages[i].message == "card") {
-            cardTypes.push(messages[i]);
-        } else  {
-
-            timeout = i * timeoutInterval;
-            setTimeout(handleMessage.bind(null, messages[i], sender), timeout);
-        }
-
-        previousType = messages[i].message;
-
-    }
-}
-
-function handleDialogFlowResponse(sender, response) {
-    let responseText = response.fulfillmentMessages.fulfillmentText;
-
-    let messages = response.fulfillmentMessages;
-    let action = response.action;
-    let contexts = response.outputContexts;
-    let parameters = response.parameters;
-
-    fbService.sendTypingOff(sender);
-
-    if (fbService.isDefined(action)) {
-        handleDialogFlowAction(sender, action, messages, contexts, parameters);
-    } else if (fbService.isDefined(messages)) {
-        fbService.handleMessages(messages, sender);
-	} else if (responseText == '' && !fbService.isDefined(action)) {
-		//dialogflow could not evaluate input.
-        fbService.sendTextMessage(sender, "I'm not sure what you want. Can you be more specific?");
-	} else if (fbService.isDefined(responseText)) {
-        fbService.sendTextMessage(sender, responseText);
-	}
-}
-
-
-async function resolveAfterXSeconds(x) {
-    return new Promise(resolve => {
-        setTimeout(() => {
-            resolve(x);
-        }, x * 1000);
-    });
-}
-
-
-async function greetUserText(userId) {
-    let user = usersMap.get(userId);
-    if (!user) {
-        await resolveAfterXSeconds(2);
-        user = usersMap.get(userId);
-    }
-
-    if (user) {
-        sendTextMessage(userId, "Welcome " + user.first_name + '! ' +
-            'I can answer frequently asked questions for you ' +
-            'and I perform job interviews. What can I help you with?');
-    } else {
-        sendTextMessage(userId, 'Welcome! ' +
-            'I can answer frequently asked questions for you ' +
-            'and I perform job interviews. What can I help you with?');
-    }
-}
-
-
-
-function sendFunNewsSubscribe(userId) {
-    let responceText = "I can send you latest fun technology news, " +
-        "you'll be on top of things and you'll get some laughts. How often would you like to receive them?";
-
-    let replies = [
-        {
-            "content_type": "text",
-            "title": "Once per week",
-            "payload": "NEWS_PER_WEEK"
-        },
-        {
-            "content_type": "text",
-            "title": "Once per day",
-            "payload": "NEWS_PER_DAY"
-        }
-    ];
-
-    fbService.sendQuickReply(userId, responceText, replies);
-}
-
-/*
- * Call the Send API. The message data goes in the body. If successful, we'll 
- * get the message id in a response 
- *
- */
 function callSendAPI(messageData) {
 	request({
 		uri: 'https://graph.facebook.com/v3.2/me/messages',
@@ -624,60 +311,12 @@ function callSendAPI(messageData) {
 	});
 }
 
-
-/*
- * Postback Event
- *
- * This event is called when a postback is tapped on a Structured Message. 
- * https://developers.facebook.com/docs/messenger-platform/webhook-reference/postback-received
- * 
- */
-function receivedPostback(event) {
-	var senderID = event.sender.id;
-	var recipientID = event.recipient.id;
-	var timeOfPostback = event.timestamp;
-
-    setSessionAndUser(senderID);
-
-	// The 'payload' param is a developer-defined field which is set in a postback 
-	// button for Structured Messages. 
-	var payload = event.postback.payload;
-
-	switch (payload) {
-        case 'FUN_NEWS':
-            sendFunNewsSubscribe(senderID);
-            break;
-        case 'GET_STARTED':
-            greetUserText(senderID);
-            break;
-        case 'JOB_APPLY':
-            //get feedback with new jobs
-            dialogflowService.sendEventToDialogFlow(sessionIds, handleDialogFlowResponse, senderID, 'JOB_OPENINGS');
-            break;
-        case 'CHAT':
-            //user wants to chat
-            fbService.sendTextMessage(senderID, "I love chatting too. Do you have any other questions for me?");
-            break;
-		default:
-			//unindentified payload
-            fbService.sendTextMessage(senderID, "I'm not sure what you want. Can you be more specific?");
-			break;
-
-	}
-
-	console.log("Received postback for user %d and page %d with payload '%s' " +
-		"at %d", senderID, recipientID, payload, timeOfPostback);
-
-}
-
-
-
 /*
  * Message Read Event
  *
  * This event is called when a previously-sent message has been read.
  * https://developers.facebook.com/docs/messenger-platform/webhook-reference/message-read
- * 
+ *
  */
 function receivedMessageRead(event) {
 	var senderID = event.sender.id;
@@ -697,7 +336,7 @@ function receivedMessageRead(event) {
  * This event is called when the Link Account or UnLink Account action has been
  * tapped.
  * https://developers.facebook.com/docs/messenger-platform/webhook-reference/account-linking
- * 
+ *
  */
 function receivedAccountLink(event) {
 	var senderID = event.sender.id;
@@ -713,7 +352,7 @@ function receivedAccountLink(event) {
 /*
  * Delivery Confirmation Event
  *
- * This event is sent to confirm the delivery of a message. Read more about 
+ * This event is sent to confirm the delivery of a message. Read more about
  * these fields at https://developers.facebook.com/docs/messenger-platform/webhook-reference/message-delivered
  *
  */
@@ -738,8 +377,8 @@ function receivedDeliveryConfirmation(event) {
 /*
  * Authorization Event
  *
- * The value for 'optin.ref' is defined in the entry point. For the "Send to 
- * Messenger" plugin, it is the 'data-ref' field. Read more at 
+ * The value for 'optin.ref' is defined in the entry point. For the "Send to
+ * Messenger" plugin, it is the 'data-ref' field. Read more at
  * https://developers.facebook.com/docs/messenger-platform/webhook-reference/authentication
  *
  */
@@ -748,12 +387,7 @@ function receivedAuthentication(event) {
 	var recipientID = event.recipient.id;
 	var timeOfAuth = event.timestamp;
 
-	// The 'ref' field is set in the 'Send to Messenger' plugin, in the 'data-ref'
-	// The developer can set this to an arbitrary value to associate the 
-	// authentication callback with the 'Send to Messenger' click event. This is
-	// a way to do account linking when the user clicks the 'Send to Messenger' 
-	// plugin.
-	var passThroughParam = event.optin.ref;
+		var passThroughParam = event.optin.ref;
 
 	console.log("Received authentication for user %d and page %d with pass " +
 		"through param '%s' at %d", senderID, recipientID, passThroughParam,
@@ -764,14 +398,7 @@ function receivedAuthentication(event) {
 	sendTextMessage(senderID, "Authentication successful");
 }
 
-/*
- * Verify that the callback came from Facebook. Using the App Secret from 
- * the App Dashboard, we can verify the signature that is sent with each 
- * callback in the x-hub-signature field, located in the header.
- *
- * https://developers.facebook.com/docs/graph-api/webhooks#setup
- *
- */
+
 function verifyRequestSignature(req, res, buf) {
 	var signature = req.headers["x-hub-signature"];
 
@@ -825,10 +452,8 @@ function isDefined(obj) {
 	if (!obj) {
 		return false;
 	}
-
 	return obj != null;
 }
-
 // Spin up the server
 app.listen(app.get('port'), function () {
 	console.log('running on port', app.get('port'))
